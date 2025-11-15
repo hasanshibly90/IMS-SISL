@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investor Management System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h2 class="text-center">Investor Management System</h2>
+
+        <table class="table table-bordered mt-4">
+            <thead class="table-dark">
+                <tr>
+                    <th>Investor Name</th>
+                    <th>Start Date</th>
+                    <th>End Date</th>
+                    <th>Profit %</th>
+                    <th>Balance Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if investors %}
+                    {% for investor in investors %}
+                    <tr>
+                        <td>{{ investor.name }}</td>
+                        <td>{{ investor.start_date if investor.start_date != 'N/A' else '-' }}</td>
+                        <td>{{ investor.end_date if investor.end_date != 'N/A' else '-' }}</td>
+                        <td>{{ investor.profit_percentage if investor.profit_percentage != 'N/A' else '-' }}</td>
+                        <td>{{ investor.balance if investor.balance != 'N/A' else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center">No Investors Found</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

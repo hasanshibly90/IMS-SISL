@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Journal Entries</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2em;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1em;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+    tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+  </style>
+</head>
+<body>
+  <h1>Journal Entries</h1>
+  {% if journal_entries.error %}
+    <p>Error: {{ journal_entries.error }}</p>
+  {% else %}
+    {% if journal_entries %}
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in journal_entries %}
+            <tr>
+              <td>{{ entry.key }}</td>
+              <td>{{ entry.date }}</td>
+              <td>{{ entry.description }}</td>
+              <td>
+                {% if entry.amount %}
+                  {{ entry.amount.value }} {{ entry.amount.currency or '' }}
+                {% else %}
+                  N/A
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No journal entries found.</p>
+    {% endif %}
+  {% endif %}
+</body>
+</html>
