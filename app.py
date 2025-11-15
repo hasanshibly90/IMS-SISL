@@ -5,6 +5,10 @@ from datetime import datetime
 from threading import Lock
 import requests
 import os
+import json
+
+import plotly.graph_objs as go
+from plotly.utils import PlotlyJSONEncoder
 
 app = Flask(__name__)
 # Database configuration (SQLite for now)
@@ -351,6 +355,66 @@ def split_investor_variant(raw_name: str):
     return base_name, phase_label, display
 
 
+def group_investors_for_dashboard(investors):
+    """
+    Group Investor rows by base investor name (ignoring numeric codes and
+    phase suffixes in parentheses) so the dashboard shows one row per
+    investor, with aggregated balances and dates.
+    """
+    groups = {}
+
+    for inv in investors:
+        base_name, phase_label, display_name = split_investor_variant(inv.name)
+        key = base_name or inv.name or "Unknown"
+
+        g = groups.get(key)
+        if not g:
+            g = groups[key] = {
+                "name": key,
+                "start_date": None,
+                "end_date": None,
+                "duration_months": None,
+                "remaining_months": 0,
+                "profit_percentage": 0.0,
+                "balance": 0.0,
+                "monthly_profit": 0.0,
+            }
+
+        # Aggregate numeric fields
+        g["balance"] += inv.balance or 0.0
+        g["monthly_profit"] += inv.monthly_profit or 0.0
+
+        # Track earliest start date and latest end date
+        if inv.start_date:
+            if not g["start_date"] or inv.start_date < g["start_date"]:
+                g["start_date"] = inv.start_date
+        if inv.end_date:
+            if not g["end_date"] or inv.end_date > g["end_date"]:
+                g["end_date"] = inv.end_date
+
+        # For profit percentage, prefer non-zero values; if multiple
+        # different values exist we leave the last non-zero value.
+        if inv.profit_percentage:
+            g["profit_percentage"] = inv.profit_percentage
+
+    # Derive duration and remaining months per group using aggregated dates
+    for g in groups.values():
+        start_date = g["start_date"]
+        end_date = g["end_date"]
+
+        if start_date and end_date:
+            start_dt = parse_date(start_date)
+            end_dt = parse_date(end_date)
+            g["duration_months"] = calculate_months_difference(start_dt, end_dt)
+            g["remaining_months"] = calculate_remaining_months(end_dt)
+        else:
+            g["duration_months"] = None
+            g["remaining_months"] = 0
+
+    # Sort groups by investor name for stable display
+    return sorted(groups.values(), key=lambda x: x["name"])
+
+
 def _parse_investor_name_from_account(account_str: str, expected_prefix: str):
     """
     Given an account string like 'Loans payable — Name' or 'Profit payable - Name',
@@ -535,7 +599,142 @@ def before_request():
 # ---------------------------
 @app.route('/')
 def home():
-    investors = Investor.query.all()
+    search_query = (request.args.get("q") or "").strip()
+    search_lower = search_query.lower()
+
+    raw_investors = Investor.query.order_by(Investor.name).all()
+
+    # Group investors by base name but keep per-phase rows.
+    groups = {}
+    for inv in raw_investors:
+        base_name, phase_label, display_name = split_investor_variant(inv.name)
+        key = base_name or inv.name or "Unknown"
+
+        g = groups.get(key)
+        if not g:
+            g = groups[key] = {
+                "name": key,
+                "start_date": None,
+                "end_date": None,
+                "duration_months": None,
+                "remaining_months": 0,
+                "profit_percentage": 0.0,
+                "balance": 0.0,
+                "monthly_profit": 0.0,
+                "members": [],
+            }
+        g["members"].append(inv)
+
+        g["balance"] += inv.balance or 0.0
+        g["monthly_profit"] += inv.monthly_profit or 0.0
+
+        if inv.start_date:
+            if not g["start_date"] or inv.start_date < g["start_date"]:
+                g["start_date"] = inv.start_date
+        if inv.end_date:
+            if not g["end_date"] or inv.end_date > g["end_date"]:
+                g["end_date"] = inv.end_date
+
+        if inv.profit_percentage:
+            g["profit_percentage"] = inv.profit_percentage
+
+    # Derive duration and remaining months per group using aggregated dates
+    for g in groups.values():
+        start_date = g["start_date"]
+        end_date = g["end_date"]
+        if start_date and end_date:
+            start_dt = parse_date(start_date)
+            end_dt = parse_date(end_date)
+            g["duration_months"] = calculate_months_difference(start_dt, end_dt)
+        g["remaining_months"] = calculate_remaining_months(end_dt)
+    else:
+        g["duration_months"] = None
+        g["remaining_months"] = 0
+
+    # Optional filtering by investor name (group or member)
+    if search_query:
+        filtered_groups = {}
+        for key, g in groups.items():
+            key_match = search_lower in (key or "").lower()
+            member_match = any(
+                search_lower in (m.name or "").lower()
+                for m in g["members"]
+            )
+            if key_match or member_match:
+                filtered_groups[key] = g
+    else:
+        filtered_groups = groups
+
+    # Build table rows: phases followed by a group total row.
+    # Order groups by total balance (largest to smallest),
+    # and within each group order phases by balance as well.
+    table_rows = []
+    for key, g in sorted(filtered_groups.items(), key=lambda item: (item[1]["balance"] or 0), reverse=True):
+        for inv in sorted(g["members"], key=lambda inv: (inv.balance or 0), reverse=True):
+            table_rows.append({
+                "kind": "phase",
+                "name": inv.name,
+                "start_date": inv.start_date,
+                "end_date": inv.end_date,
+                "duration_months": inv.duration_months,
+                "remaining_months": inv.remaining_months,
+                "profit_percentage": inv.profit_percentage,
+                "monthly_profit": inv.monthly_profit,
+                "balance": inv.balance,
+            })
+        table_rows.append({
+            "kind": "total",
+            "name": f"{key} (Total)",
+            "start_date": g["start_date"],
+            "end_date": g["end_date"],
+            "duration_months": g["duration_months"],
+            "remaining_months": g["remaining_months"],
+            "profit_percentage": g["profit_percentage"],
+            "monthly_profit": g["monthly_profit"],
+            "balance": g["balance"],
+        })
+
+    # Build Plotly bar chart (horizontal) using Python,
+    # aggregated by investor group total balance (respecting any filter).
+    bar_pairs = sorted(
+        ((g["name"], g["balance"]) for g in filtered_groups.values()),
+        key=lambda x: x[1] or 0,
+        reverse=True,
+    )
+    sorted_labels = [name for name, _ in bar_pairs]
+    sorted_balances = [bal for _, bal in bar_pairs]
+
+    bar_fig = go.Figure(
+        data=[
+            go.Bar(
+                x=sorted_balances,
+                y=sorted_labels,
+                orientation="h",
+                marker=dict(
+                    color="rgba(59, 130, 246, 0.85)",
+                    line=dict(color="rgba(37, 99, 235, 1)", width=1.2),
+                ),
+                hovertemplate="%{y}<br>Tk %{x:,.0f}<extra></extra>",
+            )
+        ]
+    )
+    bar_fig.update_layout(
+        height=420,
+        margin=dict(l=220, r=40, t=40, b=40),
+        xaxis=dict(
+            title="Balance Amount (Tk)",
+            tickprefix="Tk ",
+            separatethousands=True,
+            gridcolor="rgba(148, 163, 184, 0.3)",
+            zerolinecolor="rgba(148, 163, 184, 0.5)",
+        ),
+        yaxis=dict(automargin=True),
+        showlegend=False,
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#f9fafb",
+        title=dict(text="Investor's Investment Distribution", x=0.5),
+    )
+    bar_chart_json = json.dumps(bar_fig, cls=PlotlyJSONEncoder)
 
     total_monthly_profit = db.session.query(func.sum(Investor.monthly_profit)).scalar() or 0
     total_balance = db.session.query(func.sum(Investor.balance)).scalar() or 0
@@ -544,9 +743,9 @@ def home():
     total_current_payable = db.session.query(func.sum(Investor.profit_due)).scalar() or 0
 
     avg_profit_percentage = 0
-    if investors:
-        sum_percentage = sum(inv.profit_percentage or 0 for inv in investors)
-        avg_profit_percentage = sum_percentage / len(investors)
+    if groups:
+        sum_percentage = sum(g["profit_percentage"] or 0 for g in groups.values())
+        avg_profit_percentage = sum_percentage / len(groups)
 
     # Compute the custom Profit %:
     # (Total Monthly Profit * 12 * 100) / Total Balance Amount
@@ -556,7 +755,7 @@ def home():
 
     return render_template(
         'task.html',
-        investors=investors,
+        investors=table_rows,
         format_currency=format_currency,
         total_monthly_profit=total_monthly_profit,
         total_balance=total_balance,
@@ -565,7 +764,9 @@ def home():
         total_current_payable=total_current_payable,
         avg_profit_percentage=avg_profit_percentage,
         computed_profit_percentage=computed_profit_percentage,
-        last_update_time=last_update_time
+        last_update_time=last_update_time,
+        bar_chart_json=bar_chart_json,
+        search_query=search_query,
     )
 
 
@@ -720,6 +921,9 @@ def investment_summary():
     New grouped summary: one row per investor (base name) plus
     per-phase/per-ledger detail rows.
     """
+    search_query = (request.args.get("q") or "").strip()
+    search_lower = search_query.lower()
+
     accounts_data = fetch_special_accounts()
     receipt_lines = fetch_receipt_lines()
     payment_lines = fetch_payment_lines()
@@ -876,7 +1080,15 @@ def investment_summary():
         group["phases_list"] = sorted(group["phases"].values(), key=lambda p: p["name"])
         group_list.append(group)
 
-    group_list.sort(key=lambda g: g["name"])
+    # Order summary groups by current balance (largest to smallest)
+    group_list.sort(key=lambda g: (g["current_balance"] or 0), reverse=True)
+
+    # Optional filter by investor base name
+    if search_query:
+        group_list = [
+            g for g in group_list
+            if search_lower in (g["name"] or "").lower()
+        ]
 
     totals = {
         "total_received": sum(g["total_received"] for g in group_list),
@@ -891,6 +1103,7 @@ def investment_summary():
         groups=group_list,
         totals=totals,
         format_currency=format_currency,
+        search_query=search_query,
     )
 
 
@@ -905,10 +1118,16 @@ def journal():
 # ---------------------------
 @app.route('/chart_data')
 def chart_data():
-    # Example: returning investor names and their balances.
-    investors = Investor.query.all()
-    labels = [inv.name for inv in investors]
-    balances = [inv.balance for inv in investors]
+    # Return investor GROUP names and their total balances
+    # (same base-name grouping used on the dashboard),
+    # with optional ?q=<name> filter.
+    search_query = (request.args.get("q") or "").strip().lower()
+    raw_investors = Investor.query.order_by(Investor.name).all()
+    grouped = group_investors_for_dashboard(raw_investors)
+    if search_query:
+        grouped = [g for g in grouped if search_query in (g["name"] or "").lower()]
+    labels = [g["name"] for g in grouped]
+    balances = [g["balance"] for g in grouped]
     return jsonify({'labels': labels, 'balances': balances})
 
 # ---------------------------

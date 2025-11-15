@@ -8,10 +8,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" />
   <!-- D3.js for Gantt chart -->
   <script src="https://d3js.org/d3.v6.min.js"></script>
-  <!-- Chart.js for Pie and Bar Charts -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- Chart.js Data Labels Plugin (for pie chart) -->
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+  <!-- Plotly for modern charts -->
+  <script src="https://cdn.plot.ly/plotly-2.27.1.min.js"></script>
   
   <style>
     body {
@@ -209,14 +207,13 @@
     <nav class="top-nav">
       <a class="nav-link-pill {% if request.endpoint == 'home' %}active{% endif %}" href="{{ url_for('home') }}">Dashboard</a>
       <a class="nav-link-pill {% if request.endpoint == 'investment_summary' %}active{% endif %}" href="{{ url_for('investment_summary') }}">Investment Summary</a>
-      <a class="nav-link-pill {% if request.endpoint == 'journal' %}active{% endif %}" href="{{ url_for('journal') }}">Journal</a>
     </nav>
   </header>
 
   <!-- Main Content -->
   <div class="container">
     <!-- Sync controls / status -->
-    <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
       <div>
         <strong>Last synced:</strong>
         {% if last_update_time %}
@@ -225,7 +222,20 @@
           Never
         {% endif %}
       </div>
-      <div>
+      <div class="d-flex align-items-center gap-2">
+        <form method="get" class="d-flex align-items-center gap-1">
+          <input
+            type="text"
+            name="q"
+            class="form-control form-control-sm"
+            placeholder="Search investor name..."
+            value="{{ search_query or request.args.get('q', '') }}"
+          >
+          <button type="submit" class="btn btn-outline-secondary btn-sm">Search</button>
+          {% if search_query or request.args.get('q') %}
+            <a href="{{ url_for('home') }}" class="btn btn-link btn-sm text-decoration-none">Clear</a>
+          {% endif %}
+        </form>
         <a href="{{ url_for('sync') }}" class="btn btn-primary btn-sm">
           Sync Now
         </a>
@@ -248,14 +258,20 @@
                 <th class="duration-col">Duration (Months)</th>
                 <th class="remaining-col">Remaining (Months)</th>
                 <th>Profit %</th>
-                <th class="balance-right">Monthly Profit</th>
-                <th class="balance-right">Balance Amount</th>
+                <th class="balance-right">Monthly Profit (Tk)</th>
+                <th class="balance-right">Balance Amount (Tk)</th>
               </tr>
             </thead>
             <tbody>
               {% for investor in investors %}
-              <tr>
-                <td class="name-left">{{ investor.name }}</td>
+              <tr class="{% if investor.kind == 'total' %}total-row{% endif %}">
+                <td class="name-left">
+                  {% if investor.kind == 'total' %}
+                    {{ investor.name }}
+                  {% else %}
+                    &mdash; {{ investor.name }}
+                  {% endif %}
+                </td>
                 <td>{{ investor.start_date if investor.start_date else '-' }}</td>
                 <td>{{ investor.end_date if investor.end_date else '-' }}</td>
                 <td>{{ investor.duration_months if investor.duration_months is not none else '-' }}</td>
@@ -280,43 +296,6 @@
       </div>
     </div>
 
-    <!-- Profit Payable Table Card -->
-    <div class="card">
-      <div class="card-header">
-        Profit Payable Status
-      </div>
-      <div class="card-body">
-        <div class="table-responsive">
-          <table class="table table-bordered table-hover">
-            <thead>
-              <tr>
-                <th>Investor Name</th>
-                <th class="balance-right">Profit Payable (Up to Now)</th>
-                <th class="balance-right">Profit Paid</th>
-                <th class="balance-right">Current Payable</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for investor in investors %}
-              <tr>
-                <td class="name-left">{{ investor.name }}</td>
-                <td class="balance-right">{{ format_currency(investor.profit_payable_up_to_now) }}</td>
-                <td class="balance-right">{{ format_currency(investor.dividend_paid) }}</td>
-                <td class="balance-right">{{ format_currency(investor.profit_due) }}</td>
-              </tr>
-              {% endfor %}
-              <tr class="total-row">
-                <td>Total</td>
-                <td class="balance-right">{{ format_currency(total_profit_payable_up_to_now) }}</td>
-                <td class="balance-right">{{ format_currency(total_dividend_paid) }}</td>
-                <td class="balance-right">{{ format_currency(total_current_payable) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
     <!-- Charts Section: Pie and Bar Charts Cards -->
     <div class="charts-section">
       <!-- Pie Chart Card -->
@@ -325,7 +304,7 @@
           Investor's Investment Ratio (Pie Chart)
         </div>
         <div class="card-body">
-          <canvas id="investmentPieChart"></canvas>
+          <div id="investmentPieChart" style="height:380px;"></div>
         </div>
       </div>
       <!-- Bar Chart Card -->
@@ -334,7 +313,7 @@
           Investor's Investment Distribution (Bar Chart)
         </div>
         <div class="card-body">
-          <canvas id="investmentBarChart"></canvas>
+          <div id="investmentBarChart" style="height:380px;"></div>
         </div>
       </div>
     </div>
@@ -363,120 +342,84 @@
   <!-- Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
-  <!-- Pie & Bar Charts Script (Using Data Labels for the Pie) -->
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels"></script>
+  <!-- Pie & Bar Charts Script -->
   <script>
-    fetch('/chart_data')
+    // Carry current ?q= filter through to chart_data so charts
+    // reflect the same investor-name filter as the table.
+    const urlParams = new URLSearchParams(window.location.search);
+    const query = urlParams.get('q') || '';
+    let chartUrl = '/chart_data';
+    if (query) {
+      chartUrl += '?q=' + encodeURIComponent(query);
+    }
+
+    fetch(chartUrl)
       .then(response => response.json())
       .then(data => {
-        // Save real investor names for tooltip display
-        const realLabels = data.labels;
-        // Use blank labels for the pie chart slices so only percentages are shown
-        const blankLabels = data.balances.map(() => "");
+        // Build pairs of {name, value}
+        const pairs = (data.labels || []).map((name, i) => ({
+          name: name || 'Unknown',
+          value: Number((data.balances || [])[i] || 0)
+        }));
 
-        // PIE CHART: Only show percentage on slices; tooltip includes investor name
-        const pieCtx = document.getElementById('investmentPieChart').getContext('2d');
-        new Chart(pieCtx, {
-          type: 'pie',
-          data: {
-            labels: blankLabels,
-            datasets: [{
-              data: data.balances,
-              backgroundColor: [
-                'rgba(75, 192, 192, 0.6)',
-                'rgba(255, 99, 132, 0.6)',
-                'rgba(54, 162, 235, 0.6)',
-                'rgba(255, 206, 86, 0.6)',
-                'rgba(153, 102, 255, 0.6)',
-                'rgba(255, 159, 64, 0.6)'
-              ],
-              borderColor: [
-                'rgba(75, 192, 192, 1)',
-                'rgba(255, 99, 132, 1)',
-                'rgba(54, 162, 235, 1)',
-                'rgba(255, 206, 86, 1)',
-                'rgba(153, 102, 255, 1)',
-                'rgba(255, 159, 64, 1)'
-              ],
-              borderWidth: 1
-            }]
-          },
-          options: {
-            responsive: true,
-            plugins: {
-              legend: { display: false },
-              title: { display: true, text: "Investor's Investment Ratio" },
-              tooltip: {
-                callbacks: {
-                  // Tooltip shows investor name, $value and percentage
-                  label: function(context) {
-                    const i = context.dataIndex;
-                    const name = realLabels[i] || '';
-                    const value = context.parsed || 0;
-                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                    const percentage = (value / total * 100).toFixed(2) + '%';
-                    return `${name}: $${value.toLocaleString()} (${percentage})`;
-                  }
-                }
-              },
-              datalabels: {
-                formatter: function(value, ctx) {
-                  const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-                  const percentage = (value / total * 100).toFixed(1) + '%';
-                  return percentage;
-                },
-                color: '#fff',
-                font: {
-                  size: 12,
-                  weight: 'bold'
-                }
-              }
-            }
-          },
-          plugins: [ChartDataLabels]
-        });
+        const total = pairs.reduce((sum, p) => sum + p.value, 0);
+        const maxSlices = 8; // show top 8 investors, group rest as "Others"
 
-        // BAR CHART - horizontal bar chart
-        const barCtx = document.getElementById('investmentBarChart').getContext('2d');
-        new Chart(barCtx, {
-          type: 'bar',
-          data: {
-            labels: data.labels, // use real investor names for bar chart
-            datasets: [{
-              label: 'Balance Amount',
-              data: data.balances,
-              backgroundColor: 'rgba(54, 162, 235, 0.6)',
-              borderColor: 'rgba(54, 162, 235, 1)',
-              borderWidth: 1
-            }]
-          },
-          options: {
-            indexAxis: 'y',
-            responsive: true,
-            plugins: {
-              legend: { display: false },
-              title: { display: true, text: "Investor's Investment Distribution" },
-              tooltip: {
-                callbacks: {
-                  label: function(context) {
-                    const value = context.parsed.x;
-                    return 'Balance Amount: $' + value.toLocaleString();
-                  }
-                }
-              }
-            },
-            scales: {
-              x: {
-                beginAtZero: true,
-                ticks: {
-                  callback: value => '$' + value.toLocaleString()
-                }
-              }
-            }
+        // Sort descending by value
+        pairs.sort((a, b) => b.value - a.value);
+
+        const main = pairs.slice(0, maxSlices);
+        const others = pairs.slice(maxSlices);
+        if (others.length > 0) {
+          const othersTotal = others.reduce((sum, p) => sum + p.value, 0);
+          if (othersTotal > 0) {
+            main.push({ name: 'Others', value: othersTotal });
           }
-        });
+        }
+
+        const pieLabels = main.map(p => p.name);
+        const pieData = main.map(p => p.value);
+
+        // PIE / DONUT CHART USING PLOTLY
+        const pieDiv = document.getElementById('investmentPieChart');
+        const pieTrace = {
+          labels: pieLabels,
+          values: pieData,
+          type: 'pie',
+          hole: 0.45,
+          textinfo: 'percent',
+          textposition: 'inside',
+          hovertemplate: '%{label}<br>Tk %{value:,.0f} (%{percent})<extra></extra>',
+          marker: {
+            colors: [
+              'rgba(59, 130, 246, 0.85)',
+              'rgba(16, 185, 129, 0.85)',
+              'rgba(245, 158, 11, 0.85)',
+              'rgba(239, 68, 68, 0.85)',
+              'rgba(139, 92, 246, 0.85)',
+              'rgba(236, 72, 153, 0.85)',
+              'rgba(34, 197, 94, 0.85)',
+              'rgba(148, 163, 184, 0.85)'
+            ],
+            line: { color: '#ffffff', width: 1 }
+          }
+        };
+
+        const pieLayout = {
+          margin: { l: 10, r: 10, t: 30, b: 10 },
+          showlegend: true,
+          legend: { orientation: 'v', x: 1.02, y: 0.5 },
+          title: { text: "Investor's Investment Ratio", font: { size: 16 } }
+        };
+
+        Plotly.newPlot(pieDiv, [pieTrace], pieLayout, { responsive: true });
       })
       .catch(error => console.error('Error fetching chart data:', error));
+
+    // Bar chart rendered from Python-generated Plotly figure
+    const barDiv = document.getElementById('investmentBarChart');
+    const barFig = {{ bar_chart_json | safe }};
+    Plotly.newPlot(barDiv, barFig.data, barFig.layout, { responsive: true });
   </script>
 
   <!-- Gantt Chart Script (Unified Design) -->
@@ -583,7 +526,7 @@
             tooltip.transition().style("opacity", 0.95)
                    .style("transform", "translateY(-5px)");
             tooltip.html(`<strong>${d.investor}</strong><br/>
-                          Invested: $${d.invested_amount.toLocaleString()}<br/>
+                          Invested: Tk ${d.invested_amount.toLocaleString()}<br/>
                           Start: ${d.start.toLocaleDateString()}<br/>
                           End: ${d.end.toLocaleDateString()}`)
                    .style("left", (event.pageX + 10) + "px")
@@ -618,7 +561,7 @@
           .attr("text-anchor", "middle")
           .style("font-size", "12px")
           .style("fill", "#fff")
-          .text(d => `$${d.invested_amount.toLocaleString()}`);
+          .text(d => `Tk ${d.invested_amount.toLocaleString()}`);
 
       g.selectAll(".label")
         .data(data.rows)
@@ -659,7 +602,7 @@
         .attr("y", legendHeight + 14)
         .attr("fill", "#333")
         .attr("font-size", "12px")
-        .text(`$${Math.round(colorScale.domain()[0]).toLocaleString()}`);
+        .text(`Tk ${Math.round(colorScale.domain()[0]).toLocaleString()}`);
 
       legendGroup.append("text")
         .attr("x", legendWidth)
@@ -667,7 +610,7 @@
         .attr("text-anchor", "end")
         .attr("fill", "#333")
         .attr("font-size", "12px")
-        .text(`$${Math.round(colorScale.domain()[1]).toLocaleString()}`);
+        .text(`Tk ${Math.round(colorScale.domain()[1]).toLocaleString()}`);
 
       legendGroup.append("text")
         .attr("x", 0)

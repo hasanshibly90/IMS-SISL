@@ -95,8 +95,7 @@
     <h1>Investment & Profit Summary</h1>
     <nav class="top-nav">
       <a class="nav-link-pill {% if request.endpoint == 'home' %}active{% endif %}" href="{{ url_for('home') }}">Dashboard</a>
-      <a class="nav-link-pill {% if request.endpoint == 'investment_summary_grouped' or request.endpoint == 'investment_summary' %}active{% endif %}" href="{{ url_for('investment_summary') }}">Investment Summary</a>
-      <a class="nav-link-pill {% if request.endpoint == 'journal' %}active{% endif %}" href="{{ url_for('journal') }}">Journal</a>
+      <a class="nav-link-pill {% if request.endpoint == 'investment_summary' %}active{% endif %}" href="{{ url_for('investment_summary') }}">Investment Summary</a>
     </nav>
   </header>
 
@@ -110,6 +109,22 @@
       Loans payable balance.
     </div>
 
+    <div class="d-flex justify-content-end mb-3">
+      <form method="get" class="d-flex align-items-center gap-1">
+        <input
+          type="text"
+          name="q"
+          class="form-control form-control-sm"
+          placeholder="Search investor name..."
+          value="{{ search_query or request.args.get('q', '') }}"
+        >
+        <button type="submit" class="btn btn-outline-secondary btn-sm">Search</button>
+        {% if search_query or request.args.get('q') %}
+          <a href="{{ url_for('investment_summary') }}" class="btn btn-link btn-sm text-decoration-none">Clear</a>
+        {% endif %}
+      </form>
+    </div>
+
     <div class="card">
       <div class="card-header text-center fw-bold">
         Investor Investment & Profit Summary
@@ -120,14 +135,11 @@
             <thead>
               <tr>
                 <th>Investor / Phase</th>
-                <th class="text-end">Total Received (Principal)</th>
-                <th>First Receipt Date</th>
-                <th>Last Receipt Date</th>
-                <th class="text-end">Principal Repaid</th>
-                <th class="text-end">Computed Principal Balance</th>
-                <th class="text-end">Current Balance (Loans payable)</th>
-                <th class="text-center">Balance Match</th>
-                <th class="text-end">Profit Paid</th>
+                <th class="text-end">Total Received (Principal, Tk)</th>
+                <th class="text-end">Principal Repaid (Tk)</th>
+                <th class="text-end">Profit Paid (Tk)</th>
+                <th class="text-end">Computed Principal Balance (Tk)</th>
+                <th class="text-end">Current Balance (Loans payable, Tk)</th>
               </tr>
             </thead>
             <tbody>
@@ -136,31 +148,10 @@
               <tr class="table-secondary fw-bold">
                 <td class="text-start">{{ g.name }}</td>
                 <td class="text-end">{{ format_currency(g.total_received) }}</td>
-                <td>
-                  {% if g.first_receipt_date %}
-                    {{ g.first_receipt_date.strftime('%Y-%m-%d') }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
-                <td>
-                  {% if g.last_receipt_date %}
-                    {{ g.last_receipt_date.strftime('%Y-%m-%d') }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
                 <td class="text-end">{{ format_currency(g.principal_repaid) }}</td>
+                <td class="text-end">{{ format_currency(g.profit_paid) }}</td>
                 <td class="text-end">{{ format_currency(g.computed_balance) }}</td>
                 <td class="text-end">{{ format_currency(g.current_balance) }}</td>
-                <td class="text-center">
-                  {% if g.balance_match %}
-                    ✓
-                  {% else %}
-                    ✗
-                  {% endif %}
-                </td>
-                <td class="text-end">{{ format_currency(g.profit_paid) }}</td>
               </tr>
 
               <!-- Phase / ledger detail rows -->
@@ -168,25 +159,10 @@
               <tr>
                 <td class="text-start">&mdash; {{ p.name }}</td>
                 <td class="text-end">{{ format_currency(p.total_received) }}</td>
-                <td>
-                  {% if p.first_receipt_date %}
-                    {{ p.first_receipt_date.strftime('%Y-%m-%d') }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
-                <td>
-                  {% if p.last_receipt_date %}
-                    {{ p.last_receipt_date.strftime('%Y-%m-%d') }}
-                  {% else %}
-                    -
-                  {% endif %}
-                </td>
                 <td class="text-end">{{ format_currency(p.principal_repaid) }}</td>
+                <td class="text-end">{{ format_currency(p.profit_paid) }}</td>
                 <td class="text-end">{{ format_currency(p.computed_balance) }}</td>
                 <td class="text-end">{{ format_currency(p.current_balance) }}</td>
-                <td></td>
-                <td class="text-end">{{ format_currency(p.profit_paid) }}</td>
               </tr>
               {% endfor %}
               {% endfor %}
@@ -195,13 +171,10 @@
               <tr class="table-light fw-bold">
                 <td class="text-start">Total</td>
                 <td class="text-end">{{ format_currency(totals.total_received) }}</td>
-                <td></td>
-                <td></td>
                 <td class="text-end">{{ format_currency(totals.principal_repaid) }}</td>
+                <td class="text-end">{{ format_currency(totals.profit_paid) }}</td>
                 <td class="text-end">{{ format_currency(totals.computed_balance) }}</td>
                 <td class="text-end">{{ format_currency(totals.current_balance) }}</td>
-                <td></td>
-                <td class="text-end">{{ format_currency(totals.profit_paid) }}</td>
               </tr>
               {% endif %}
             </tbody>
@@ -220,4 +193,3 @@
   </footer>
 </body>
 </html>
-
