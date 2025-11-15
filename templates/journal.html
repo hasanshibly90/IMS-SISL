@@ -5,28 +5,48 @@
   <title>Journal Entries</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      margin: 2em;
+      background-color: #ffffff;
+      color: #111827;
+      font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 30px 40px 60px 40px;
+    }
+    h1 {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
     }
     table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 1em;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
     }
     th, td {
-      border: 1px solid #ddd;
+      border: 1px solid #1f2937;
       padding: 8px;
       text-align: left;
     }
     th {
-      background-color: #f2f2f2;
+      background-color: #111111;
+      color: #ffffff;
     }
     tr:nth-child(even) {
-      background-color: #f9f9f9;
+      background-color: #ffffff;
+    }
+    tr:nth-child(odd) {
+      background-color: #f9fafb;
     }
   </style>
 </head>
 <body>
+  <header style="background-color:#f1f5f9;color:#111827;padding:16px 0;text-align:center;box-shadow:0 1px 4px rgba(15,23,42,0.08);">
+    <h1 style="margin:0;font-size:24px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;">Journal Entries</h1>
+    <nav style="display:flex;justify-content:center;gap:24px;margin-top:10px;">
+      <a class="nav-link-pill {% raw %}{% if request.endpoint == 'home' %}active{% endif %}{% endraw %}" href="{{ url_for('home') }}" style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6b7280;text-decoration:none;padding:6px 18px;border-radius:999px;transition:all .15s ease-in-out;">Dashboard</a>
+      <a class="nav-link-pill {% raw %}{% if request.endpoint == 'investment_summary' %}active{% endif %}{% endraw %}" href="{{ url_for('investment_summary') }}" style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6b7280;text-decoration:none;padding:6px 18px;border-radius:999px;transition:all .15s ease-in-out;">Investment Summary</a>
+      <a class="nav-link-pill {% raw %}{% if request.endpoint == 'journal' %}active{% endif %}{% endraw %}" href="{{ url_for('journal') }}" style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#6b7280;text-decoration:none;padding:6px 18px;border-radius:999px;transition:all .15s ease-in-out;">Journal</a>
+    </nav>
+  </header>
   <h1>Journal Entries</h1>
   {% if journal_entries.error %}
     <p>Error: {{ journal_entries.error }}</p>

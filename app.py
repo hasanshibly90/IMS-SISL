@@ -18,6 +18,11 @@ last_update_time = None  # UTC datetime of last successful sync
 UPDATE_INTERVAL_SECONDS = 300  # only refresh from Manager.io at most every 5 minutes
 DETAIL_DEBUG_COUNT = 0  # limit verbose logging for detail calls
 
+# In-memory cache for investment summary so we don't hit
+# Manager.io APIs on every /investment_summary request.
+summary_cache = None
+summary_last_update = None  # UTC datetime of last summary build
+
 # External API configuration (Manager.io adapter)
 # Defaults point to SISL's Manager.io endpoint; can be overridden by env vars.
 API_BASE_URL = os.environ.get("AIOSOL_API_BASE_URL", "https://esourcingbd.ap-southeast-1.manager.io/api2")
@@ -272,6 +277,21 @@ def extract_investor_terms_from_entry(entry):
     }
 
 
+def normalize_investor_name(name: str) -> str:
+    """
+    Normalize investor name for grouping.
+    - Trim whitespace
+    - Strip phase / variant suffixes in parentheses, e.g. 'Md X (P2)' -> 'Md X'
+    """
+    if not name:
+        return ""
+    base = name.strip()
+    idx = base.find(" (")
+    if idx != -1:
+        base = base[:idx].strip()
+    return base
+
+
 def _parse_investor_name_from_account(account_str: str, expected_prefix: str):
     """
     Given an account string like 'Loans payable — Name' or 'Profit payable - Name',
@@ -488,6 +508,19 @@ def investment_summary():
     'Dividend payable'), and compare the computed principal balance
     with the current Loans payable balance.
     """
+    global summary_cache, summary_last_update
+
+    # Serve cached summary if it's still fresh and no explicit refresh is requested.
+    if summary_cache is not None and summary_last_update is not None:
+        age = (datetime.utcnow() - summary_last_update).total_seconds()
+        if age < UPDATE_INTERVAL_SECONDS and not request.args.get("refresh"):
+            return render_template(
+                "investment_summary.html",
+                investors=summary_cache["investors"],
+                totals=summary_cache["totals"],
+                format_currency=format_currency,
+            )
+
     accounts_data = fetch_special_accounts()
     receipt_lines = fetch_receipt_lines()
     payment_lines = fetch_payment_lines()
@@ -497,26 +530,15 @@ def investment_summary():
     for entry in accounts_data:
         if entry.get("controlAccount") != "Loans payable":
             continue
-        name = entry.get("name", "")
-        if not name:
+        raw_name = entry.get("name", "")
+        if not raw_name:
             continue
+        base_name = normalize_investor_name(raw_name)
         current_balance = extract_balance_amount(entry)
-        summary[name] = {
-            "name": name,
-            "current_balance": current_balance,
-            "total_received": 0.0,
-            "first_receipt_date": None,
-            "last_receipt_date": None,
-            "principal_repaid": 0.0,
-            "profit_paid": 0.0,
-        }
-
-    # Helper to ensure an investor entry exists even if there is
-    # a receipt/payment but no Loans payable account found.
-    def ensure_investor(name: str):
-        if name not in summary:
-            summary[name] = {
-                "name": name,
+        info = summary.get(base_name)
+        if not info:
+            info = summary[base_name] = {
+                "name": base_name,
                 "current_balance": 0.0,
                 "total_received": 0.0,
                 "first_receipt_date": None,
@@ -524,7 +546,23 @@ def investment_summary():
                 "principal_repaid": 0.0,
                 "profit_paid": 0.0,
             }
-        return summary[name]
+        info["current_balance"] += current_balance
+
+    # Helper to ensure an investor entry exists even if there is
+    # a receipt/payment but no Loans payable account found.
+    def ensure_investor(raw_name: str):
+        base = normalize_investor_name(raw_name)
+        if base not in summary:
+            summary[base] = {
+                "name": base,
+                "current_balance": 0.0,
+                "total_received": 0.0,
+                "first_receipt_date": None,
+                "last_receipt_date": None,
+                "principal_repaid": 0.0,
+                "profit_paid": 0.0,
+            }
+        return summary[base]
 
     # Aggregate receipts into Loans payable accounts
     for line in receipt_lines:
@@ -579,11 +617,30 @@ def investment_summary():
     # Sort investors alphabetically for display
     investors_summary = sorted(summary.values(), key=lambda x: x["name"])
 
+    totals = {
+        "total_received": sum(i["total_received"] for i in investors_summary),
+        "principal_repaid": sum(i["principal_repaid"] for i in investors_summary),
+        "computed_balance": sum(i["computed_balance"] for i in investors_summary),
+        "current_balance": sum(i["current_balance"] for i in investors_summary),
+        "profit_paid": sum(i["profit_paid"] for i in investors_summary),
+    }
+
+    summary_cache = {"investors": investors_summary, "totals": totals}
+    summary_last_update = datetime.utcnow()
+
     return render_template(
         "investment_summary.html",
         investors=investors_summary,
+        totals=totals,
         format_currency=format_currency,
     )
+
+
+@app.route('/journal')
+def journal():
+    # Placeholder journal view – currently no API integration.
+    # Renders the Journal page with an empty list.
+    return render_template("journal.html", journal_entries=[])
 
 # ---------------------------
 # Chart Data API Route

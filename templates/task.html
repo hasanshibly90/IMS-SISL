@@ -15,25 +15,56 @@
   
   <style>
     body {
-      background-color: #f8f9fa;
-      font-family: "Roboto", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      margin-bottom: 80px;
+      background-color: #ffffff;
+      color: #111827;
+      font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding-bottom: 80px;
     }
-    /* Header */
+    /* Header / Nav */
     header {
-      background-color: #343a40;
-      color: #fff;
-      padding: 20px 0;
+      background-color: #f1f5f9;
+      color: #111827;
+      padding: 16px 0;
       text-align: center;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
     }
     header h1 {
       margin: 0;
-      font-size: 48px;
+      font-size: 28px;
+      font-weight: 600;
+    }
+    .top-nav {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 10px;
+    }
+    .top-nav .nav-link-pill {
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #6b7280;
+      text-decoration: none;
+      padding: 6px 18px;
+      border-radius: 999px;
+      transition: all 0.15s ease-in-out;
+    }
+    .top-nav .nav-link-pill:hover {
+      background-color: #e5e7eb;
+      color: #111827;
+    }
+    .top-nav .nav-link-pill.active {
+      background-color: #111827;
+      color: #ffffff;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
     }
     /* Footer */
     footer {
-      background-color: #343a40;
-      color: #fff;
+      background-color: #f1f5f9;
+      color: #6b7280;
       padding: 15px 0;
       position: fixed;
       width: 100%;
@@ -42,36 +73,50 @@
     }
     .container {
       margin-top: 30px;
+      margin-bottom: 40px;
+      max-width: 1200px;
     }
     /* Uniform card styling for all sections */
     .card {
       margin-bottom: 30px;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-      background-color: #fff;
+      border: none;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+      background-color: #ffffff;
+      color: #111827;
     }
     .card-header {
-      background-color: #f8f9fa;
-      border-bottom: 1px solid #ccc;
+      background-color: #f3f4f6;
+      border-bottom: 1px solid #e5e7eb;
       text-align: center;
       font-weight: bold;
       font-size: 18px; /* uniform header font size */
       padding: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
     .card-body {
       padding: 20px;
     }
     /* Table styling */
     .table th {
-      background-color: #343a40;
-      color: white;
+      background-color: #e5e7eb;
+      color: #111827;
       text-align: center;
       vertical-align: middle;
     }
     .table td {
       text-align: center;
       vertical-align: middle;
+    }
+    .table tbody tr:nth-child(odd) {
+      background-color: #f9fafb;
+    }
+    .table tbody tr:nth-child(even) {
+      background-color: #ffffff;
+    }
+    .table tbody tr.total-row {
+      background-color: #e5e7eb !important;
     }
     .name-left {
       text-align: left !important;
@@ -88,7 +133,7 @@
     }
     /* Charts Section */
     .charts-section {
-      margin: 50px 0;
+      margin: 50px 0 10px 0;
     }
     .chart-container {
       display: flex;
@@ -145,12 +190,27 @@
     .legend-label {
       dominant-baseline: middle;
     }
+    /* Light cards for charts for better readability */
+    .card.chart-card {
+      background-color: #ffffff;
+      color: #111827;
+    }
+    .card.chart-card .card-header {
+      background-color: #f3f4f6;
+      color: #111827;
+      border-bottom: 1px solid #e5e7eb;
+    }
   </style>
 </head>
 <body>
-  <!-- Header -->
+  <!-- Header + Nav -->
   <header class="mb-4">
     <h1>Investor Management System</h1>
+    <nav class="top-nav">
+      <a class="nav-link-pill {% if request.endpoint == 'home' %}active{% endif %}" href="{{ url_for('home') }}">Dashboard</a>
+      <a class="nav-link-pill {% if request.endpoint == 'investment_summary' %}active{% endif %}" href="{{ url_for('investment_summary') }}">Investment Summary</a>
+      <a class="nav-link-pill {% if request.endpoint == 'journal' %}active{% endif %}" href="{{ url_for('journal') }}">Journal</a>
+    </nav>
   </header>
 
   <!-- Main Content -->

@@ -5,10 +5,84 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investor Management System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #ffffff;
+            color: #111827;
+            font-family: "Inter", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding-bottom: 60px;
+        }
+        header {
+            background-color: #f1f5f9;
+            color: #111827;
+            padding: 16px 0;
+            text-align: center;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            box-shadow: 0 1px 4px rgba(15,23,42,0.08);
+        }
+        .top-nav {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 10px;
+        }
+        .top-nav .nav-link-pill {
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #6b7280;
+            text-decoration: none;
+            padding: 6px 18px;
+            border-radius: 999px;
+            transition: all 0.15s ease-in-out;
+        }
+        .top-nav .nav-link-pill:hover {
+            background-color: #e5e7eb;
+            color: #111827;
+        }
+        .top-nav .nav-link-pill.active {
+            background-color: #111827;
+            color: #ffffff;
+            box-shadow: 0 2px 6px rgba(15,23,42,0.25);
+        }
+        .container {
+            margin-top: 30px;
+            max-width: 1000px;
+        }
+        .table thead {
+            background-color: #111111;
+            color: #ffffff;
+        }
+        .table tbody tr:nth-child(odd) {
+            background-color: #f9fafb;
+        }
+        .table tbody tr:nth-child(even) {
+            background-color: #ffffff;
+        }
+        footer {
+            background-color: #f1f5f9;
+            color: #6b7280;
+            text-align: center;
+            padding: 10px 0;
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+            font-size: 12px;
+        }
+    </style>
 </head>
 <body>
+    <header>
+        <h2 class="mb-0">Investor Management System</h2>
+        <nav class="top-nav">
+            <a class="nav-link-pill {% if request.endpoint == 'home' %}active{% endif %}" href="{{ url_for('home') }}">Dashboard</a>
+            <a class="nav-link-pill {% if request.endpoint == 'investment_summary' %}active{% endif %}" href="{{ url_for('investment_summary') }}">Investment Summary</a>
+            <a class="nav-link-pill {% if request.endpoint == 'journal' %}active{% endif %}" href="{{ url_for('journal') }}">Journal</a>
+        </nav>
+    </header>
     <div class="container mt-5">
-        <h2 class="text-center">Investor Management System</h2>
 
         <table class="table table-bordered mt-4">
             <thead class="table-dark">
@@ -39,5 +113,8 @@
             </tbody>
         </table>
     </div>
+    <footer>
+        <small>&copy; 2025 Investor Management System</small>
+    </footer>
 </body>
 </html>
