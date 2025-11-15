@@ -185,6 +185,32 @@ def fetch_receipt_lines():
         print(f"[AIOSOL] Error fetching receipt lines: {exc}")
     return []
 
+
+def fetch_journal_entry_lines():
+    """
+    Fetch journal entry lines (used for adjustments that hit Loans payable
+    or Profit payable directly, outside of receipts/payments).
+    """
+    url = f"{API_BASE_URL}/journal-entry-lines"
+    try:
+        response = requests.get(
+            url,
+            headers=_api_headers(),
+            params={"pageSize": 9999},
+            timeout=API_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return data.get("journalEntryLines", [])
+        else:
+            print(f"[AIOSOL] journal-entry-lines HTTP {response.status_code}: {response.text[:500]}")
+    except requests.RequestException as exc:
+        print(f"[AIOSOL] Error fetching journal entry lines: {exc}")
+    return []
+
 # ---------------------------
 # Helper Functions
 # ---------------------------
@@ -292,6 +318,39 @@ def normalize_investor_name(name: str) -> str:
     return base
 
 
+def split_investor_variant(raw_name: str):
+    """
+    Split a raw investor name (which may contain a numeric code and phase
+    in parentheses) into:
+      - base_name: normalized investor name (no code, no phase)
+      - phase_label: text inside the last parentheses, or "Base"
+      - display_name: cleaned display name without leading code
+
+    Examples:
+      "9995 - Ashique Hossain Turzo"          -> ("Ashique Hossain Turzo", "Base", "Ashique Hossain Turzo")
+      "9993 - Md. Ashraful Islam Rajib (P2)"  -> ("Md. Ashraful Islam Rajib", "P2", "Md. Ashraful Islam Rajib (P2)")
+    """
+    if not raw_name:
+        return "", "", ""
+
+    display = raw_name.strip()
+    # Drop leading code like "9995 - "
+    if " - " in display:
+        display = display.split(" - ", 1)[1].strip()
+
+    # Phase label from trailing parentheses, if present
+    phase_label = "Base"
+    idx = display.rfind("(")
+    if idx != -1 and display.endswith(")"):
+        phase_label = display[idx + 1 : -1].strip() or "Base"
+        base = display[:idx].strip()
+    else:
+        base = display
+
+    base_name = normalize_investor_name(base)
+    return base_name, phase_label, display
+
+
 def _parse_investor_name_from_account(account_str: str, expected_prefix: str):
     """
     Given an account string like 'Loans payable — Name' or 'Profit payable - Name',
@@ -338,6 +397,7 @@ def update_database(force: bool = False):
 
         accounts_data = fetch_special_accounts()
         payment_lines = fetch_payment_lines()
+        journal_lines = fetch_journal_entry_lines()
 
         # If the API call failed or returned nothing, don't wipe existing data
         if not accounts_data:
@@ -373,6 +433,23 @@ def update_database(force: bool = False):
             )
             if investor_name:
                 amount = abs(line.get("amount", {}).get("value", 0))
+                dividend_paid_data[investor_name] = dividend_paid_data.get(investor_name, 0) + amount
+
+        # Journal-entry-lines: debits to Profit/Dividend payable reduce the liability
+        # and should be treated as profit distributions.
+        for line in journal_lines:
+            if not isinstance(line, dict):
+                continue
+            account_str = (line.get("account") or "").strip()
+            investor_name = (
+                _parse_investor_name_from_account(account_str, "Profit payable")
+                or _parse_investor_name_from_account(account_str, "Dividend payable")
+            )
+            if not investor_name:
+                continue
+            debit = line.get("debit") or {}
+            amount = abs(debit.get("value", 0)) if isinstance(debit, dict) else 0
+            if amount:
                 dividend_paid_data[investor_name] = dividend_paid_data.get(investor_name, 0) + amount
 
         # Process investor "Loans payable" accounts
@@ -498,8 +575,8 @@ def sync():
     return redirect(url_for('home'))
 
 
-@app.route('/investment_summary')
-def investment_summary():
+# Legacy summary (no longer exposed via a route)
+def investment_summary_legacy():
     """
     Summarize, per investor, how much principal we have received
     (receipt-lines posted to 'Loans payable — Name'), how much
@@ -524,6 +601,7 @@ def investment_summary():
     accounts_data = fetch_special_accounts()
     receipt_lines = fetch_receipt_lines()
     payment_lines = fetch_payment_lines()
+    journal_lines = fetch_journal_entry_lines()
 
     # Seed investors from Loans payable special accounts
     summary = {}
@@ -631,6 +709,186 @@ def investment_summary():
     return render_template(
         "investment_summary.html",
         investors=investors_summary,
+        totals=totals,
+        format_currency=format_currency,
+    )
+
+
+@app.route('/investment_summary')
+def investment_summary():
+    """
+    New grouped summary: one row per investor (base name) plus
+    per-phase/per-ledger detail rows.
+    """
+    accounts_data = fetch_special_accounts()
+    receipt_lines = fetch_receipt_lines()
+    payment_lines = fetch_payment_lines()
+    journal_lines = fetch_journal_entry_lines()
+
+    groups = {}
+
+    def ensure_group_and_phase(raw_name: str, current_balance_delta: float = 0.0):
+        base_name, phase_label, display_name = split_investor_variant(raw_name)
+        if not base_name:
+            return None, None
+
+        group = groups.get(base_name)
+        if not group:
+            group = groups[base_name] = {
+                "name": base_name,
+                "current_balance": 0.0,
+                "total_received": 0.0,
+                "principal_repaid": 0.0,
+                "profit_paid": 0.0,
+                "first_receipt_date": None,
+                "last_receipt_date": None,
+                "phases": {},
+            }
+        group["current_balance"] += current_balance_delta
+
+        phases = group["phases"]
+        phase = phases.get(display_name)
+        if not phase:
+            phase = phases[display_name] = {
+                "name": display_name,
+                "phase": phase_label,
+                "current_balance": 0.0,
+                "total_received": 0.0,
+                "principal_repaid": 0.0,
+                "profit_paid": 0.0,
+                "first_receipt_date": None,
+                "last_receipt_date": None,
+            }
+        phase["current_balance"] += current_balance_delta
+        return group, phase
+
+    # Seed groups from Loans payable special accounts
+    for entry in accounts_data:
+        if entry.get("controlAccount") != "Loans payable":
+            continue
+        raw_name = entry.get("name", "")
+        balance = extract_balance_amount(entry)
+        if not raw_name or balance == 0:
+            continue
+        ensure_group_and_phase(raw_name, current_balance_delta=balance)
+
+    # Aggregate receipts into Loans payable accounts
+    for line in receipt_lines:
+        if not isinstance(line, dict):
+            continue
+        account_str = (line.get("account") or "").strip()
+        investor_raw = _parse_investor_name_from_account(account_str, "Loans payable")
+        if not investor_raw:
+            continue
+
+        amount = abs(line.get("amount", {}).get("value", 0))
+        group, phase = ensure_group_and_phase(investor_raw)
+        if not group or not phase:
+            continue
+
+        group["total_received"] += amount
+        phase["total_received"] += amount
+
+        date_str = line.get("date")
+        date_dt = parse_date(date_str) if date_str else None
+        if date_dt:
+            for target in (group, phase):
+                if not target["first_receipt_date"] or date_dt < target["first_receipt_date"]:
+                    target["first_receipt_date"] = date_dt
+                if not target["last_receipt_date"] or date_dt > target["last_receipt_date"]:
+                    target["last_receipt_date"] = date_dt
+
+    # Aggregate payments: principal repayments and profit payouts
+    for line in payment_lines:
+        if not isinstance(line, dict):
+            continue
+        account_str = (line.get("account") or "").strip()
+        amount = abs(line.get("amount", {}).get("value", 0))
+
+        inv_lp = _parse_investor_name_from_account(account_str, "Loans payable")
+        inv_pp = (
+            _parse_investor_name_from_account(account_str, "Profit payable")
+            or _parse_investor_name_from_account(account_str, "Dividend payable")
+        )
+
+        if inv_lp:
+            group, phase = ensure_group_and_phase(inv_lp)
+            if not group or not phase:
+                continue
+            group["principal_repaid"] += amount
+            phase["principal_repaid"] += amount
+            continue
+
+        if inv_pp:
+            group, phase = ensure_group_and_phase(inv_pp)
+            if not group or not phase:
+                continue
+            group["profit_paid"] += amount
+            phase["profit_paid"] += amount
+
+    # Journal-entry-lines: Loans payable principal and Profit payable profit
+    for line in journal_lines:
+        if not isinstance(line, dict):
+            continue
+        account_str = (line.get("account") or "").strip()
+        debit = line.get("debit") or {}
+        credit = line.get("credit") or {}
+        debit_val = abs(debit.get("value", 0)) if isinstance(debit, dict) else 0
+        credit_val = abs(credit.get("value", 0)) if isinstance(credit, dict) else 0
+
+        inv_lp = _parse_investor_name_from_account(account_str, "Loans payable")
+        inv_pp = (
+            _parse_investor_name_from_account(account_str, "Profit payable")
+            or _parse_investor_name_from_account(account_str, "Dividend payable")
+        )
+
+        # Loans payable: credit increases principal, debit reduces principal
+        if inv_lp:
+            group, phase = ensure_group_and_phase(inv_lp)
+            if not group or not phase:
+                continue
+            if credit_val:
+                group["total_received"] += credit_val
+                phase["total_received"] += credit_val
+            if debit_val:
+                group["principal_repaid"] += debit_val
+                phase["principal_repaid"] += debit_val
+            continue
+
+        # Profit payable: debit reduces liability, treat as profit paid
+        if inv_pp and debit_val:
+            group, phase = ensure_group_and_phase(inv_pp)
+            if not group or not phase:
+                continue
+            group["profit_paid"] += debit_val
+            phase["profit_paid"] += debit_val
+
+    # Finalize computed balances and match flags
+    group_list = []
+    for group in groups.values():
+        for phase in group["phases"].values():
+            phase["computed_balance"] = phase["total_received"] - phase["principal_repaid"]
+
+        group["computed_balance"] = group["total_received"] - group["principal_repaid"]
+        current_balance = group["current_balance"] or 0.0
+        group["balance_match"] = abs(group["computed_balance"] - current_balance) < 0.01
+
+        group["phases_list"] = sorted(group["phases"].values(), key=lambda p: p["name"])
+        group_list.append(group)
+
+    group_list.sort(key=lambda g: g["name"])
+
+    totals = {
+        "total_received": sum(g["total_received"] for g in group_list),
+        "principal_repaid": sum(g["principal_repaid"] for g in group_list),
+        "computed_balance": sum(g["computed_balance"] for g in group_list),
+        "current_balance": sum(g["current_balance"] for g in group_list),
+        "profit_paid": sum(g["profit_paid"] for g in group_list),
+    }
+
+    return render_template(
+        "investment_summary.html",
+        groups=group_list,
         totals=totals,
         format_currency=format_currency,
     )
