@@ -274,10 +274,34 @@
                 </td>
                 <td>{{ investor.start_date if investor.start_date else '-' }}</td>
                 <td>{{ investor.end_date if investor.end_date else '-' }}</td>
-                <td>{{ investor.duration_months if investor.duration_months is not none else '-' }}</td>
-                <td>{{ investor.remaining_months if investor.remaining_months is not none else '-' }}</td>
-                <td>{{ investor.profit_percentage }}</td>
-                <td class="balance-right">{{ format_currency(investor.monthly_profit) }}</td>
+                <td>
+                  {% if investor.start_date and investor.end_date and investor.duration_months is not none %}
+                    {{ investor.duration_months }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>
+                  {% if investor.start_date and investor.end_date and investor.remaining_months is not none %}
+                    {{ investor.remaining_months }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>
+                  {% if investor.start_date and investor.profit_percentage %}
+                    {{ investor.profit_percentage }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td class="balance-right">
+                  {% if investor.start_date and investor.profit_percentage %}
+                    {{ format_currency(investor.monthly_profit) }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
                 <td class="balance-right">{{ format_currency(investor.balance) }}</td>
               </tr>
               {% endfor %}
