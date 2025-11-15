@@ -155,6 +155,23 @@
 
   <!-- Main Content -->
   <div class="container">
+    <!-- Sync controls / status -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <strong>Last synced:</strong>
+        {% if last_update_time %}
+          {{ last_update_time.strftime('%Y-%m-%d %H:%M:%S') }} UTC
+        {% else %}
+          Never
+        {% endif %}
+      </div>
+      <div>
+        <a href="{{ url_for('sync') }}" class="btn btn-primary btn-sm">
+          Sync Now
+        </a>
+      </div>
+    </div>
+
     <!-- Investor Details Table Card -->
     <div class="card">
       <div class="card-header">
