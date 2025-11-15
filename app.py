@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 from datetime import datetime
+from threading import Lock
 import requests
 import os
 
@@ -9,6 +10,11 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///investors.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# Synchronization control (to avoid concurrent DB writes / locks)
+db_update_lock = Lock()
+last_update_time = None  # UTC datetime of last successful sync
+UPDATE_INTERVAL_SECONDS = 300  # only refresh from Manager.io at most every 5 minutes
 
 # ---------------------------
 # Investor Model (with dividend_paid field)
@@ -132,82 +138,96 @@ def format_currency(value):
 # ---------------------------
 # Main Update Logic
 # ---------------------------
-def update_database():
-    accounts_data = fetch_special_accounts()
-    payment_lines = fetch_payment_lines()
+def update_database(force: bool = False):
+    """
+    Pull fresh data from Manager.io APIs and refresh the Investor table.
+    Runs at most once every UPDATE_INTERVAL_SECONDS unless force=True.
+    Wrapped in a process-wide lock to avoid concurrent SQLite writes.
+    """
+    global last_update_time
 
-    db.session.query(Investor).delete()  # Clear old records
+    with db_update_lock:
+        if not force and last_update_time is not None:
+            elapsed = (datetime.utcnow() - last_update_time).total_seconds()
+            if elapsed < UPDATE_INTERVAL_SECONDS:
+                return
 
-    # Gather "Profit Payable" amounts by investor name from special accounts
-    profit_payable_data = {}
-    for entry in accounts_data:
-        if entry.get("controlAccount") == "Profit Payable":
+        accounts_data = fetch_special_accounts()
+        payment_lines = fetch_payment_lines()
+
+        db.session.query(Investor).delete()  # Clear old records
+
+        # Gather "Profit Payable" amounts by investor name from special accounts
+        profit_payable_data = {}
+        for entry in accounts_data:
+            if entry.get("controlAccount") == "Profit Payable":
+                name = entry.get("name", "")
+                payable_value = abs(entry.get("balance", {}).get("value", 0))
+                profit_payable_data[name] = payable_value
+
+        # Aggregate dividend paid amounts from payment-lines API
+        dividend_paid_data = {}
+        for line in payment_lines:
+            if not isinstance(line, dict):
+                continue
+            account_str = line.get("account", "")
+            if account_str.lower().startswith("dividend payable"):
+                parts = account_str.split("-")
+                if parts and len(parts) >= 2:
+                    investor_name = parts[-1].strip()
+                    amount = abs(line.get("amount", {}).get("value", 0))
+                    dividend_paid_data[investor_name] = dividend_paid_data.get(investor_name, 0) + amount
+
+        # Process investor "Loans payable" accounts
+        for entry in accounts_data:
+            if entry.get("controlAccount") != "Loans payable":
+                continue
+
             name = entry.get("name", "")
-            payable_value = abs(entry.get("balance", {}).get("value", 0))
-            profit_payable_data[name] = payable_value
+            balance = abs(entry.get("balance", {}).get("value", 0))
+            key = entry.get("key", "")
 
-    # Aggregate dividend paid amounts from payment-lines API
-    dividend_paid_data = {}
-    for line in payment_lines:
-        if not isinstance(line, dict):
-            continue
-        account_str = line.get("account", "")
-        if account_str.lower().startswith("dividend payable"):
-            parts = account_str.split("-")
-            if parts and len(parts) >= 2:
-                investor_name = parts[-1].strip()
-                amount = abs(line.get("amount", {}).get("value", 0))
-                dividend_paid_data[investor_name] = dividend_paid_data.get(investor_name, 0) + amount
+            details = fetch_investor_details(key)
+            start_date = details.get("start_date", "")
+            end_date = details.get("end_date", "")
+            profit_percentage = details.get("profit_percentage", 0)
 
-    # Process investor "Loans payable" accounts
-    for entry in accounts_data:
-        if entry.get("controlAccount") != "Loans payable":
-            continue
+            start_date, end_date = ensure_correct_dates(start_date, end_date)
+            start_dt = parse_date(start_date)
+            end_dt = parse_date(end_date)
 
-        name = entry.get("name", "")
-        balance = abs(entry.get("balance", {}).get("value", 0))
-        key = entry.get("key", "")
+            duration_months = calculate_months_difference(start_dt, end_dt)
+            remaining_months = calculate_remaining_months(end_dt)
+            monthly_profit = calculate_monthly_profit(balance, profit_percentage)
 
-        details = fetch_investor_details(key)
-        start_date = details.get("start_date", "")
-        end_date = details.get("end_date", "")
-        profit_percentage = details.get("profit_percentage", 0)
+            elapsed_months = calculate_elapsed_months(start_dt)
+            total_profit_payable = elapsed_months * monthly_profit
 
-        start_date, end_date = ensure_correct_dates(start_date, end_date)
-        start_dt = parse_date(start_date)
-        end_dt = parse_date(end_date)
+            # Get dividend paid from payment-lines aggregation
+            dividend_paid_value = dividend_paid_data.get(name, 0)
+            # For backward compatibility, also assign profit_paid from special accounts if needed
+            profit_paid_value = profit_payable_data.get(name, 0)
+            # Current Payable = total profit payable minus dividend paid
+            current_payable = max(0, total_profit_payable - dividend_paid_value)
 
-        duration_months = calculate_months_difference(start_dt, end_dt)
-        remaining_months = calculate_remaining_months(end_dt)
-        monthly_profit = calculate_monthly_profit(balance, profit_percentage)
+            investor = Investor(
+                name=name,
+                start_date=start_date,
+                end_date=end_date,
+                duration_months=duration_months,
+                remaining_months=remaining_months,
+                profit_percentage=profit_percentage,
+                balance=balance,
+                monthly_profit=monthly_profit,
+                profit_payable_up_to_now=total_profit_payable,
+                profit_paid=profit_paid_value,
+                profit_due=current_payable,
+                dividend_paid=dividend_paid_value
+            )
+            db.session.add(investor)
 
-        elapsed_months = calculate_elapsed_months(start_dt)
-        total_profit_payable = elapsed_months * monthly_profit
-
-        # Get dividend paid from payment-lines aggregation
-        dividend_paid_value = dividend_paid_data.get(name, 0)
-        # For backward compatibility, also assign profit_paid from special accounts if needed
-        profit_paid_value = profit_payable_data.get(name, 0)
-        # Current Payable = total profit payable minus dividend paid
-        current_payable = max(0, total_profit_payable - dividend_paid_value)
-
-        investor = Investor(
-            name=name,
-            start_date=start_date,
-            end_date=end_date,
-            duration_months=duration_months,
-            remaining_months=remaining_months,
-            profit_percentage=profit_percentage,
-            balance=balance,
-            monthly_profit=monthly_profit,
-            profit_payable_up_to_now=total_profit_payable,
-            profit_paid=profit_paid_value,
-            profit_due=current_payable,
-            dividend_paid=dividend_paid_value
-        )
-        db.session.add(investor)
-
-    db.session.commit()
+        db.session.commit()
+        last_update_time = datetime.utcnow()
 
 @app.before_request
 def before_request():
