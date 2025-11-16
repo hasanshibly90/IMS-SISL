@@ -446,6 +446,28 @@ def _parse_investor_name_from_account(account_str: str, expected_prefix: str):
                 return name
     return None
 
+
+def _parse_investor_name_from_account_v2(account_str: str, expected_prefix: str):
+    """
+    More robust parsing of investor name from an account string such as
+    'Loans payable - Name' or 'Profit payable — Name' by:
+      - matching the expected prefix case-insensitively
+      - stripping the prefix
+      - trimming any dash/space separator immediately after
+    """
+    if not account_str:
+        return None
+    raw = account_str.strip()
+    prefix = expected_prefix.strip()
+    if not raw.lower().startswith(prefix.lower()):
+        return None
+
+    # Remove the prefix and any separators right after it (spaces and dashes)
+    rest = raw[len(prefix) :]
+    rest = rest.lstrip(" -–—\u2013\u2014")
+    name = rest.strip()
+    return name or None
+
 def format_currency(value):
     try:
         return "{:,.2f}".format(float(value)) if value else "0.00"
@@ -483,11 +505,12 @@ def update_database(force: bool = False):
 
         db.session.query(Investor).delete()  # Clear old records
 
-        # Gather "Profit Payable" amounts by investor name from special accounts
+        # Gather "Profit payable" amounts by investor name from special accounts
         profit_payable_data = {}
         profit_payable_count = 0
         for entry in accounts_data:
-            if entry.get("controlAccount") == "Profit Payable":
+            control = (entry.get("controlAccount") or "").strip().lower()
+            if control == "profit payable":
                 name = entry.get("name", "")
                 payable_value = extract_balance_amount(entry)
                 profit_payable_data[name] = payable_value
@@ -502,8 +525,8 @@ def update_database(force: bool = False):
                 continue
             account_str = (line.get("account") or "").strip()
             investor_name = (
-                _parse_investor_name_from_account(account_str, "Dividend payable")
-                or _parse_investor_name_from_account(account_str, "Profit payable")
+                _parse_investor_name_from_account_v2(account_str, "Dividend payable")
+                or _parse_investor_name_from_account_v2(account_str, "Profit payable")
             )
             if investor_name:
                 amount = abs(line.get("amount", {}).get("value", 0))
@@ -516,8 +539,8 @@ def update_database(force: bool = False):
                 continue
             account_str = (line.get("account") or "").strip()
             investor_name = (
-                _parse_investor_name_from_account(account_str, "Profit payable")
-                or _parse_investor_name_from_account(account_str, "Dividend payable")
+                _parse_investor_name_from_account_v2(account_str, "Profit payable")
+                or _parse_investor_name_from_account_v2(account_str, "Dividend payable")
             )
             if not investor_name:
                 continue
@@ -904,7 +927,7 @@ def investment_summary_legacy():
         if not isinstance(line, dict):
             continue
         account_str = (line.get("account") or "").strip()
-        investor_name = _parse_investor_name_from_account(account_str, "Loans payable")
+        investor_name = _parse_investor_name_from_account_v2(account_str, "Loans payable")
         if not investor_name:
             continue
         amount = abs(line.get("amount", {}).get("value", 0))
@@ -927,7 +950,7 @@ def investment_summary_legacy():
         amount = abs(line.get("amount", {}).get("value", 0))
 
         # Principal repayments to Loans payable — Name
-        investor_name_lp = _parse_investor_name_from_account(account_str, "Loans payable")
+        investor_name_lp = _parse_investor_name_from_account_v2(account_str, "Loans payable")
         if investor_name_lp:
             info = ensure_investor(investor_name_lp)
             info["principal_repaid"] += amount
@@ -935,8 +958,8 @@ def investment_summary_legacy():
 
         # Profit paid to Profit payable / Dividend payable — Name
         investor_name_profit = (
-            _parse_investor_name_from_account(account_str, "Profit payable")
-            or _parse_investor_name_from_account(account_str, "Dividend payable")
+            _parse_investor_name_from_account_v2(account_str, "Profit payable")
+            or _parse_investor_name_from_account_v2(account_str, "Dividend payable")
         )
         if investor_name_profit:
             info = ensure_investor(investor_name_profit)
@@ -1032,7 +1055,8 @@ def investment_summary():
 
     # Seed groups from Loans payable special accounts
     for entry in accounts_data:
-        if entry.get("controlAccount") != "Loans payable":
+        control = (entry.get("controlAccount") or "").strip().lower()
+        if control != "loans payable":
             continue
         raw_name = entry.get("name", "")
         balance = extract_balance_amount(entry)
@@ -1041,21 +1065,43 @@ def investment_summary():
         ensure_group_and_phase(raw_name, loans_balance_delta=balance)
 
     # Seed Profit payable balances (current liability) per investor/phase
+    profit_special_count = 0
     for entry in accounts_data:
-        if entry.get("controlAccount") != "Profit Payable":
+        control = (entry.get("controlAccount") or "").strip().lower()
+        if control != "profit payable":
             continue
         raw_name = entry.get("name", "")
         balance = extract_balance_amount(entry)
         if not raw_name or balance == 0:
             continue
         ensure_group_and_phase(raw_name, profit_balance_delta=balance)
+        profit_special_count += 1
+
+    # If there are no Profit Payable special accounts, derive balances
+    # directly from journal-entry-lines (credit increases liability,
+    # debit reduces it).
+    if profit_special_count == 0:
+        for line in journal_lines:
+            if not isinstance(line, dict):
+                continue
+            account_str = (line.get("account") or "").strip()
+            investor_raw = _parse_investor_name_from_account_v2(account_str, "Profit payable")
+            if not investor_raw:
+                continue
+            debit = line.get("debit") or {}
+            credit = line.get("credit") or {}
+            debit_val = abs(debit.get("value", 0)) if isinstance(debit, dict) else 0
+            credit_val = abs(credit.get("value", 0)) if isinstance(credit, dict) else 0
+            delta = credit_val - debit_val
+            if delta:
+                ensure_group_and_phase(investor_raw, profit_balance_delta=delta)
 
     # Aggregate receipts into Loans payable accounts
     for line in receipt_lines:
         if not isinstance(line, dict):
             continue
         account_str = (line.get("account") or "").strip()
-        investor_raw = _parse_investor_name_from_account(account_str, "Loans payable")
+        investor_raw = _parse_investor_name_from_account_v2(account_str, "Loans payable")
         if not investor_raw:
             continue
 
@@ -1083,10 +1129,10 @@ def investment_summary():
         account_str = (line.get("account") or "").strip()
         amount = abs(line.get("amount", {}).get("value", 0))
 
-        inv_lp = _parse_investor_name_from_account(account_str, "Loans payable")
+        inv_lp = _parse_investor_name_from_account_v2(account_str, "Loans payable")
         inv_pp = (
-            _parse_investor_name_from_account(account_str, "Profit payable")
-            or _parse_investor_name_from_account(account_str, "Dividend payable")
+            _parse_investor_name_from_account_v2(account_str, "Profit payable")
+            or _parse_investor_name_from_account_v2(account_str, "Dividend payable")
         )
 
         if inv_lp:
@@ -1114,10 +1160,10 @@ def investment_summary():
         debit_val = abs(debit.get("value", 0)) if isinstance(debit, dict) else 0
         credit_val = abs(credit.get("value", 0)) if isinstance(credit, dict) else 0
 
-        inv_lp = _parse_investor_name_from_account(account_str, "Loans payable")
+        inv_lp = _parse_investor_name_from_account_v2(account_str, "Loans payable")
         inv_pp = (
-            _parse_investor_name_from_account(account_str, "Profit payable")
-            or _parse_investor_name_from_account(account_str, "Dividend payable")
+            _parse_investor_name_from_account_v2(account_str, "Profit payable")
+            or _parse_investor_name_from_account_v2(account_str, "Dividend payable")
         )
 
         # Loans payable: credit increases principal, debit reduces principal
@@ -1145,11 +1191,25 @@ def investment_summary():
     group_list = []
     for group in groups.values():
         for phase in group["phases"].values():
+            # Principal side: Loans payable flows
             phase["computed_balance"] = phase["total_received"] - phase["principal_repaid"]
+
+            # Profit payable balance per phase:
+            # - If we have Profit Payable special-accounts, their "balance"
+            #   already reflects all credits and debits (i.e., outstanding
+            #   profit payable), so use it as-is.
+            # - If not, we derive it from journal-entry-lines as net
+            #   credit minus debit, which is also already outstanding.
+            profit_phase_raw = phase.get("current_balance_profit") or 0.0
+            phase["current_balance_profit"] = profit_phase_raw
 
         group["computed_balance"] = group["total_received"] - group["principal_repaid"]
         loans_balance = group.get("current_balance_loans") or 0.0
         group["balance_match"] = abs(group["computed_balance"] - loans_balance) < 0.01
+
+        # Profit payable balance per investor (group), same reasoning as above.
+        profit_group_raw = group.get("current_balance_profit") or 0.0
+        group["current_balance_profit"] = profit_group_raw
 
         group["phases_list"] = sorted(group["phases"].values(), key=lambda p: p["name"])
         group_list.append(group)
