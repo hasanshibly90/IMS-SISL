@@ -10,11 +10,12 @@ rows = cursor.fetchall()
 
 # Display results
 if rows:
-    print("✅ Stored Investors:")
+    print("Stored investors:")
     for row in rows:
         print(row)
 else:
-    print("❌ No investors found in the database.")
+    print("No investors found in the database.")
 
 # Close connection
 conn.close()
+

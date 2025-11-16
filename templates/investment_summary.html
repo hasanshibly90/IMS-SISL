@@ -140,6 +140,7 @@
                 <th class="text-end">Profit Paid (Tk)</th>
                 <th class="text-end">Computed Principal Balance (Tk)</th>
                 <th class="text-end">Current Balance (Loans payable, Tk)</th>
+                <th class="text-end">Current Balance (Profit payable, Tk)</th>
               </tr>
             </thead>
             <tbody>
@@ -151,7 +152,8 @@
                 <td class="text-end">{{ format_currency(g.principal_repaid) }}</td>
                 <td class="text-end">{{ format_currency(g.profit_paid) }}</td>
                 <td class="text-end">{{ format_currency(g.computed_balance) }}</td>
-                <td class="text-end">{{ format_currency(g.current_balance) }}</td>
+                <td class="text-end">{{ format_currency(g.current_balance_loans) }}</td>
+                <td class="text-end">{{ format_currency(g.current_balance_profit) }}</td>
               </tr>
 
               <!-- Phase / ledger detail rows -->
@@ -162,7 +164,8 @@
                 <td class="text-end">{{ format_currency(p.principal_repaid) }}</td>
                 <td class="text-end">{{ format_currency(p.profit_paid) }}</td>
                 <td class="text-end">{{ format_currency(p.computed_balance) }}</td>
-                <td class="text-end">{{ format_currency(p.current_balance) }}</td>
+                <td class="text-end">{{ format_currency(p.current_balance_loans) }}</td>
+                <td class="text-end">{{ format_currency(p.current_balance_profit) }}</td>
               </tr>
               {% endfor %}
               {% endfor %}
@@ -174,7 +177,8 @@
                 <td class="text-end">{{ format_currency(totals.principal_repaid) }}</td>
                 <td class="text-end">{{ format_currency(totals.profit_paid) }}</td>
                 <td class="text-end">{{ format_currency(totals.computed_balance) }}</td>
-                <td class="text-end">{{ format_currency(totals.current_balance) }}</td>
+                <td class="text-end">{{ format_currency(totals.current_balance_loans) }}</td>
+                <td class="text-end">{{ format_currency(totals.current_balance_profit) }}</td>
               </tr>
               {% endif %}
             </tbody>

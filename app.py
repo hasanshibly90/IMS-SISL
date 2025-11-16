@@ -702,10 +702,10 @@ def home():
             start_dt = parse_date(start_date)
             end_dt = parse_date(end_date)
             g["duration_months"] = calculate_months_difference(start_dt, end_dt)
-        g["remaining_months"] = calculate_remaining_months(end_dt)
-    else:
-        g["duration_months"] = None
-        g["remaining_months"] = 0
+            g["remaining_months"] = calculate_remaining_months(end_dt)
+        else:
+            g["duration_months"] = None
+            g["remaining_months"] = 0
 
     # Optional filtering by investor name (group or member)
     if search_query:
@@ -987,7 +987,11 @@ def investment_summary():
 
     groups = {}
 
-    def ensure_group_and_phase(raw_name: str, current_balance_delta: float = 0.0):
+    def ensure_group_and_phase(
+        raw_name: str,
+        loans_balance_delta: float = 0.0,
+        profit_balance_delta: float = 0.0,
+    ):
         base_name, phase_label, display_name = split_investor_variant(raw_name)
         if not base_name:
             return None, None
@@ -996,7 +1000,8 @@ def investment_summary():
         if not group:
             group = groups[base_name] = {
                 "name": base_name,
-                "current_balance": 0.0,
+                "current_balance_loans": 0.0,
+                "current_balance_profit": 0.0,
                 "total_received": 0.0,
                 "principal_repaid": 0.0,
                 "profit_paid": 0.0,
@@ -1004,7 +1009,8 @@ def investment_summary():
                 "last_receipt_date": None,
                 "phases": {},
             }
-        group["current_balance"] += current_balance_delta
+        group["current_balance_loans"] += loans_balance_delta
+        group["current_balance_profit"] += profit_balance_delta
 
         phases = group["phases"]
         phase = phases.get(display_name)
@@ -1012,14 +1018,16 @@ def investment_summary():
             phase = phases[display_name] = {
                 "name": display_name,
                 "phase": phase_label,
-                "current_balance": 0.0,
+                "current_balance_loans": 0.0,
+                "current_balance_profit": 0.0,
                 "total_received": 0.0,
                 "principal_repaid": 0.0,
                 "profit_paid": 0.0,
                 "first_receipt_date": None,
                 "last_receipt_date": None,
             }
-        phase["current_balance"] += current_balance_delta
+        phase["current_balance_loans"] += loans_balance_delta
+        phase["current_balance_profit"] += profit_balance_delta
         return group, phase
 
     # Seed groups from Loans payable special accounts
@@ -1030,7 +1038,17 @@ def investment_summary():
         balance = extract_balance_amount(entry)
         if not raw_name or balance == 0:
             continue
-        ensure_group_and_phase(raw_name, current_balance_delta=balance)
+        ensure_group_and_phase(raw_name, loans_balance_delta=balance)
+
+    # Seed Profit payable balances (current liability) per investor/phase
+    for entry in accounts_data:
+        if entry.get("controlAccount") != "Profit Payable":
+            continue
+        raw_name = entry.get("name", "")
+        balance = extract_balance_amount(entry)
+        if not raw_name or balance == 0:
+            continue
+        ensure_group_and_phase(raw_name, profit_balance_delta=balance)
 
     # Aggregate receipts into Loans payable accounts
     for line in receipt_lines:
@@ -1130,14 +1148,14 @@ def investment_summary():
             phase["computed_balance"] = phase["total_received"] - phase["principal_repaid"]
 
         group["computed_balance"] = group["total_received"] - group["principal_repaid"]
-        current_balance = group["current_balance"] or 0.0
-        group["balance_match"] = abs(group["computed_balance"] - current_balance) < 0.01
+        loans_balance = group.get("current_balance_loans") or 0.0
+        group["balance_match"] = abs(group["computed_balance"] - loans_balance) < 0.01
 
         group["phases_list"] = sorted(group["phases"].values(), key=lambda p: p["name"])
         group_list.append(group)
 
-    # Order summary groups by current balance (largest to smallest)
-    group_list.sort(key=lambda g: (g["current_balance"] or 0), reverse=True)
+    # Order summary groups by Loans payable current balance (largest to smallest)
+    group_list.sort(key=lambda g: (g.get("current_balance_loans") or 0), reverse=True)
 
     # Optional filter by investor base name
     if search_query:
@@ -1150,7 +1168,8 @@ def investment_summary():
         "total_received": sum(g["total_received"] for g in group_list),
         "principal_repaid": sum(g["principal_repaid"] for g in group_list),
         "computed_balance": sum(g["computed_balance"] for g in group_list),
-        "current_balance": sum(g["current_balance"] for g in group_list),
+        "current_balance_loans": sum(g.get("current_balance_loans") or 0 for g in group_list),
+        "current_balance_profit": sum(g.get("current_balance_profit") or 0 for g in group_list),
         "profit_paid": sum(g["profit_paid"] for g in group_list),
     }
 
