@@ -40,6 +40,7 @@ API_TIMEOUT_SECONDS = 10
 # Simple admin login (for protecting the dashboard)
 ADMIN_USERNAME = os.environ.get("IMS_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("IMS_ADMIN_PASSWORD")
+ENV_LABEL = (os.environ.get("IMS_ENV_LABEL") or "").strip()
 
 # Custom field IDs for SISL investor terms
 NEW_START_ID = "826be8ff-63ab-4773-a616-c322ff84063e"
@@ -632,7 +633,7 @@ def login():
         else:
             error = "Invalid username or password"
 
-    return render_template('login.html', error=error)
+    return render_template('login.html', error=error, env_label=ENV_LABEL)
 
 
 @app.route('/logout')
