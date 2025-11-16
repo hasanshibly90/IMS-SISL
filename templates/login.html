@@ -25,13 +25,17 @@
           padding: 0 1.5rem;
           display: flex;
           align-items: center;
-          justify-content: space-between;
+          justify-content: flex-end;
+          position: relative;
       }
       .brand-text {
           letter-spacing: 0.08em;
           text-transform: uppercase;
           font-weight: 600;
           font-size: 0.95rem;
+          position: absolute;
+          left: 50%;
+          transform: translateX(-50%);
       }
       .env-pill {
           font-size: 0.7rem;
