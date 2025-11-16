@@ -9,6 +9,7 @@ import json
 
 import plotly.graph_objs as go
 from plotly.utils import PlotlyJSONEncoder
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import (
     MANAGER_API_BASE_URL,
@@ -57,7 +58,7 @@ OLD_END_ID = FIELD_IDS["end_old"]
 OLD_PROFIT_ID = FIELD_IDS["profit_old"]
 
 # ---------------------------
-# Investor Model (with dividend_paid field)
+# Models
 # ---------------------------
 class Investor(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -70,9 +71,15 @@ class Investor(db.Model):
     balance = db.Column(db.Float, nullable=False)
     monthly_profit = db.Column(db.Float, nullable=True)
     profit_payable_up_to_now = db.Column(db.Float, default=0)
-    profit_paid = db.Column(db.Float, default=0)   # existing computed field (if needed)
-    profit_due = db.Column(db.Float, default=0)      # computed as: profit_payable_up_to_now - dividend_paid
-    dividend_paid = db.Column(db.Float, default=0)   # new field from payment-lines API
+    profit_paid = db.Column(db.Float, default=0)
+    profit_due = db.Column(db.Float, default=0)
+    dividend_paid = db.Column(db.Float, default=0)
+
+
+class AdminUser(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(150), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
 
 # ---------------------------
 # Fetching Functions
@@ -635,9 +642,10 @@ def before_request():
     if endpoint in open_endpoints or endpoint.startswith('static'):
         return
 
-    # If no admin password is configured, do not allow login at all.
-    # (You will configure IMS_ADMIN_PASSWORD in the systemd service.)
-    if not ADMIN_PASSWORD:
+    # If neither an environment-based admin password nor a stored
+    # AdminUser exists, do not allow access beyond login.
+    has_db_admin = AdminUser.query.first() is not None
+    if not ADMIN_PASSWORD and not has_db_admin:
         return redirect(url_for('login'))
 
     if not session.get('logged_in'):
@@ -654,11 +662,21 @@ def login():
         username = (request.form.get('username') or '').strip()
         password = request.form.get('password') or ''
 
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            session['logged_in'] = True
-            return redirect(url_for('home'))
+        admin_user = AdminUser.query.first()
+        if admin_user:
+            if username == admin_user.username and check_password_hash(admin_user.password_hash, password):
+                session['logged_in'] = True
+                session['admin_username'] = admin_user.username
+                return redirect(url_for('home'))
+            else:
+                error = "Invalid username or password"
         else:
-            error = "Invalid username or password"
+            if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+                session['logged_in'] = True
+                session['admin_username'] = ADMIN_USERNAME
+                return redirect(url_for('home'))
+            else:
+                error = "Invalid username or password"
 
     return render_template('login.html', error=error, env_label=ENV_LABEL)
 
@@ -667,6 +685,50 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for('login'))
+
+
+@app.route('/change_password', methods=['GET', 'POST'])
+def change_password():
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+
+    error = None
+    message = None
+
+    if request.method == 'POST':
+        current_password = request.form.get('current_password') or ''
+        new_password = request.form.get('new_password') or ''
+        confirm_password = request.form.get('confirm_password') or ''
+
+        if not new_password or len(new_password) < 8:
+            error = "New password must be at least 8 characters long."
+        elif new_password != confirm_password:
+            error = "New password and confirmation do not match."
+        else:
+            admin_user = AdminUser.query.first()
+
+            if admin_user:
+                if not check_password_hash(admin_user.password_hash, current_password):
+                    error = "Current password is incorrect."
+                else:
+                    admin_user.password_hash = generate_password_hash(new_password)
+                    db.session.commit()
+                    message = "Password updated successfully."
+            else:
+                env_password = ADMIN_PASSWORD or ""
+                if current_password != env_password:
+                    error = "Current password is incorrect."
+                else:
+                    username = session.get('admin_username') or (ADMIN_USERNAME or "admin")
+                    admin_user = AdminUser(
+                        username=username,
+                        password_hash=generate_password_hash(new_password),
+                    )
+                    db.session.add(admin_user)
+                    db.session.commit()
+                    message = "Password set successfully."
+
+    return render_template('change_password.html', error=error, message=message, env_label=ENV_LABEL)
 
 
 @app.route('/healthz')

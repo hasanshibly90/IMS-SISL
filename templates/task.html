@@ -207,6 +207,8 @@
     <nav class="top-nav">
       <a class="nav-link-pill {% if request.endpoint == 'home' %}active{% endif %}" href="{{ url_for('home') }}">Dashboard</a>
       <a class="nav-link-pill {% if request.endpoint == 'investment_summary' %}active{% endif %}" href="{{ url_for('investment_summary') }}">Investment Summary</a>
+      <a class="nav-link-pill {% if request.endpoint == 'change_password' %}active{% endif %}" href="{{ url_for('change_password') }}">Change Password</a>
+      <a class="nav-link-pill" href="{{ url_for('logout') }}">Logout</a>
     </nav>
   </header>
 
