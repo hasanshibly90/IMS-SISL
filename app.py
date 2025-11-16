@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, redirect, url_for, request
+from flask import Flask, render_template, jsonify, redirect, url_for, request, session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 from datetime import datetime
@@ -11,6 +11,7 @@ import plotly.graph_objs as go
 from plotly.utils import PlotlyJSONEncoder
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("IMS_SECRET_KEY", "change-me-in-production")
 # Database configuration (SQLite for now)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///investors.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -35,6 +36,10 @@ API_KEY = os.environ.get(
     "Ch5TTUFSVCBJTkRVU1RSSUFMIFNPTFVUSU9OIExURC4SEgnyKhJxeaxVRhGtOA2alblJKBoSCQKFGqhLRrVBEZAgv0uBOk6W",
 )
 API_TIMEOUT_SECONDS = 10
+
+# Simple admin login (for protecting the dashboard)
+ADMIN_USERNAME = os.environ.get("IMS_ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("IMS_ADMIN_PASSWORD")
 
 # Custom field IDs for SISL investor terms
 NEW_START_ID = "826be8ff-63ab-4773-a616-c322ff84063e"
@@ -589,10 +594,56 @@ def before_request():
     # Skip automatic sync for the explicit /sync endpoint
     if request.endpoint == 'sync':
         return
+
     # Only auto-sync once when there is no data yet.
     global last_update_time
     if last_update_time is None and Investor.query.count() == 0:
         update_database(force=True)
+
+    # --- Authentication guard ---
+    # Allow unauthenticated access to the login page, health check and static assets.
+    open_endpoints = {'login', 'healthcheck'}
+    endpoint = request.endpoint or ''
+    if endpoint in open_endpoints or endpoint.startswith('static'):
+        return
+
+    # If no admin password is configured, do not allow login at all.
+    # (You will configure IMS_ADMIN_PASSWORD in the systemd service.)
+    if not ADMIN_PASSWORD:
+        return redirect(url_for('login'))
+
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if session.get('logged_in'):
+        return redirect(url_for('home'))
+
+    error = None
+    if request.method == 'POST':
+        username = (request.form.get('username') or '').strip()
+        password = request.form.get('password') or ''
+
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('home'))
+        else:
+            error = "Invalid username or password"
+
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+@app.route('/healthz')
+def healthcheck():
+    return "ok", 200
 
 # ---------------------------
 # Home Route (Table View)
