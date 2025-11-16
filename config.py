@@ -15,10 +15,12 @@ MANAGER_API_BASE_URL = (
     or "https://esourcingbd.ap-southeast-1.manager.io/api2"
 )
 
+# NOTE: No default API key is embedded here on purpose.
+# Configure MANAGER_API_KEY (or legacy AIOSOL_API_KEY) via environment
+# variables on each deployment.
 MANAGER_API_KEY = (
     os.environ.get("MANAGER_API_KEY")
     or os.environ.get("AIOSOL_API_KEY")
-    or "Ch5TTUFSVCBJTkRVU1RSSUFMIFNPTFVUSU9OIExURC4SEgnyKhJxeaxVRhGtOA2alblJKBoSCQKFGqhLRrVBEZAgv0uBOk6W"
 )
 
 # HTTP timeout for Manager.io API calls (seconds)
@@ -49,4 +51,3 @@ FIELD_IDS = {
         "INVESTOR_FIELD_PROFIT_OLD", "1e1a26a2-b4a5-4c89-b259-368ec797177e"
     ),
 }
-

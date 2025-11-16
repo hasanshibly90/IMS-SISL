@@ -10,6 +10,14 @@ import json
 import plotly.graph_objs as go
 from plotly.utils import PlotlyJSONEncoder
 
+from config import (
+    MANAGER_API_BASE_URL,
+    MANAGER_API_KEY,
+    API_TIMEOUT_SECONDS as CFG_API_TIMEOUT_SECONDS,
+    UPDATE_INTERVAL_SECONDS as CFG_UPDATE_INTERVAL_SECONDS,
+    FIELD_IDS,
+)
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("IMS_SECRET_KEY", "change-me-in-production")
 # Database configuration (SQLite for now)
@@ -20,7 +28,7 @@ db = SQLAlchemy(app)
 # Synchronization control (to avoid concurrent DB writes / locks)
 db_update_lock = Lock()
 last_update_time = None  # UTC datetime of last successful sync
-UPDATE_INTERVAL_SECONDS = 300  # only refresh from Manager.io at most every 5 minutes
+UPDATE_INTERVAL_SECONDS = CFG_UPDATE_INTERVAL_SECONDS  # max refresh interval from config
 DETAIL_DEBUG_COUNT = 0  # limit verbose logging for detail calls
 
 # In-memory cache for investment summary so we don't hit
@@ -29,13 +37,9 @@ summary_cache = None
 summary_last_update = None  # UTC datetime of last summary build
 
 # External API configuration (Manager.io adapter)
-# Defaults point to SISL's Manager.io endpoint; can be overridden by env vars.
-API_BASE_URL = os.environ.get("AIOSOL_API_BASE_URL", "https://esourcingbd.ap-southeast-1.manager.io/api2")
-API_KEY = os.environ.get(
-    "AIOSOL_API_KEY",
-    "Ch5TTUFSVCBJTkRVU1RSSUFMIFNPTFVUSU9OIExURC4SEgnyKhJxeaxVRhGtOA2alblJKBoSCQKFGqhLRrVBEZAgv0uBOk6W",
-)
-API_TIMEOUT_SECONDS = 10
+API_BASE_URL = MANAGER_API_BASE_URL
+API_KEY = MANAGER_API_KEY
+API_TIMEOUT_SECONDS = CFG_API_TIMEOUT_SECONDS
 
 # Simple admin login (for protecting the dashboard)
 ADMIN_USERNAME = os.environ.get("IMS_ADMIN_USERNAME", "admin")
@@ -43,14 +47,14 @@ ADMIN_PASSWORD = os.environ.get("IMS_ADMIN_PASSWORD")
 ENV_LABEL = (os.environ.get("IMS_ENV_LABEL") or "").strip()
 
 # Custom field IDs for SISL investor terms
-NEW_START_ID = "826be8ff-63ab-4773-a616-c322ff84063e"
-NEW_END_ID = "6e7981f8-d83f-44b8-beac-55c0acd7592c"
-NEW_PROFIT_ID = "5862bbaa-82ea-4094-a2a4-7fc6a77ebac4"
+NEW_START_ID = FIELD_IDS["start_new"]
+NEW_END_ID = FIELD_IDS["end_new"]
+NEW_PROFIT_ID = FIELD_IDS["profit_new"]
 
 # Legacy IDs kept for backward compatibility
-OLD_START_ID = "f30ea2f8-02af-4e5e-b9ec-b8c7ef2d12e2"
-OLD_END_ID = "c4b22208-6d56-4c34-870c-c5f40954526f"
-OLD_PROFIT_ID = "1e1a26a2-b4a5-4c89-b259-368ec797177e"
+OLD_START_ID = FIELD_IDS["start_old"]
+OLD_END_ID = FIELD_IDS["end_old"]
+OLD_PROFIT_ID = FIELD_IDS["profit_old"]
 
 # ---------------------------
 # Investor Model (with dividend_paid field)
